@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 
-// Define Event schema directly in the function
+// Event Schema
 const eventSchema = new mongoose.Schema({
   eventName: String,
   category: String,
@@ -12,43 +12,53 @@ const eventSchema = new mongoose.Schema({
 
 const Event = mongoose.models.Event || mongoose.model("Event", eventSchema);
 
-// Connect to MongoDB
+// Database connection
+let isConnected = false;
+
 const connectDB = async () => {
-  if (mongoose.connections[0].readyState) {
+  if (isConnected && mongoose.connection.readyState === 1) {
     return;
   }
 
   try {
-    await mongoose.connect(
-      `mongodb+srv://${process.env.DB_USER_NAME}:${process.env.DB_PASSWORD}@cluster0.5xecffb.mongodb.net/ipfs-events`,
-      {
-        tls: true,
-        tlsAllowInvalidCertificates: false,
-        tlsAllowInvalidHostnames: false,
-      }
-    );
+    const dbUser = process.env.DB_USER_NAME;
+    const dbPassword = process.env.DB_PASSWORD;
+
+    if (!dbUser || !dbPassword) {
+      throw new Error("Database credentials not found");
+    }
+
+    const connectionString = `mongodb+srv://${dbUser}:${dbPassword}@cluster0.5xecffb.mongodb.net/ipfs-events`;
+
+    await mongoose.connect(connectionString, {
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    });
+
+    isConnected = true;
   } catch (error) {
-    console.error(error);
+    console.error("MongoDB connection error:", error);
+    throw error;
   }
 };
 
 export default async function handler(req, res) {
-  // Enable CORS
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, PUT, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  try {
+    // Enable CORS
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, PUT, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  if (req.method === "OPTIONS") {
-    res.status(200).end();
-    return;
-  }
+    if (req.method === "OPTIONS") {
+      res.status(200).end();
+      return;
+    }
 
-  await connectDB();
+    await connectDB();
 
-  const { id } = req.query;
+    const { id } = req.query;
 
-  if (req.method === "GET") {
-    try {
+    if (req.method === "GET") {
       const event = await Event.findById(id);
 
       if (!event) {
@@ -59,21 +69,15 @@ export default async function handler(req, res) {
         message: "Event retrieved successfully",
         event: event,
       });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  } else if (req.method === "PUT") {
-    try {
+    } else if (req.method === "PUT") {
       if (!mongoose.Types.ObjectId.isValid(id)) {
         return res.status(400).json({ message: "Invalid event ID" });
       }
 
-      // Check if this is for updating sold count
       const { action, sold, category, description, startDate, endDate } =
         req.body;
 
       if (action === "increment_sold") {
-        // Increment sold count by 1
         const updatedEvent = await Event.findByIdAndUpdate(
           id,
           { $inc: { sold: 1 } },
@@ -81,7 +85,6 @@ export default async function handler(req, res) {
         );
         return res.json(updatedEvent);
       } else if (sold !== undefined && !category && !description) {
-        // Direct sold update
         const updatedEvent = await Event.findByIdAndUpdate(
           id,
           { sold: sold },
@@ -89,7 +92,6 @@ export default async function handler(req, res) {
         );
         return res.json(updatedEvent);
       } else {
-        // Regular event update
         const updatedEvent = await Event.findByIdAndUpdate(
           id,
           { category, description, startDate, endDate, sold },
@@ -105,11 +107,15 @@ export default async function handler(req, res) {
           updatedEvent,
         });
       }
-    } catch (error) {
-      res.status(500).json({ error: error.message });
+    } else {
+      res.setHeader("Allow", ["GET", "PUT"]);
+      res.status(405).json({ error: `Method ${req.method} Not Allowed` });
     }
-  } else {
-    res.setHeader("Allow", ["GET", "PUT"]);
-    res.status(405).end(`Method ${req.method} Not Allowed`);
+  } catch (error) {
+    console.error("Handler error:", error);
+    res.status(500).json({
+      error: "Internal server error",
+      message: error.message,
+    });
   }
 }

@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 
-// Define Event schema directly in the function
+// Event Schema
 const eventSchema = new mongoose.Schema({
   eventName: String,
   category: String,
@@ -12,41 +12,51 @@ const eventSchema = new mongoose.Schema({
 
 const Event = mongoose.models.Event || mongoose.model("Event", eventSchema);
 
-// Connect to MongoDB
+// Database connection
+let isConnected = false;
+
 const connectDB = async () => {
-  if (mongoose.connections[0].readyState) {
+  if (isConnected && mongoose.connection.readyState === 1) {
     return;
   }
 
   try {
-    await mongoose.connect(
-      `mongodb+srv://${process.env.DB_USER_NAME}:${process.env.DB_PASSWORD}@cluster0.5xecffb.mongodb.net/ipfs-events`,
-      {
-        tls: true,
-        tlsAllowInvalidCertificates: false,
-        tlsAllowInvalidHostnames: false,
-      }
-    );
+    const dbUser = process.env.DB_USER_NAME;
+    const dbPassword = process.env.DB_PASSWORD;
+
+    if (!dbUser || !dbPassword) {
+      throw new Error("Database credentials not found");
+    }
+
+    const connectionString = `mongodb+srv://${dbUser}:${dbPassword}@cluster0.5xecffb.mongodb.net/ipfs-events`;
+
+    await mongoose.connect(connectionString, {
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    });
+
+    isConnected = true;
   } catch (error) {
-    console.error(error);
+    console.error("MongoDB connection error:", error);
+    throw error;
   }
 };
 
 export default async function handler(req, res) {
-  // Enable CORS
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  try {
+    // Enable CORS
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  if (req.method === "OPTIONS") {
-    res.status(200).end();
-    return;
-  }
+    if (req.method === "OPTIONS") {
+      res.status(200).end();
+      return;
+    }
 
-  await connectDB();
+    await connectDB();
 
-  if (req.method === "GET") {
-    try {
+    if (req.method === "GET") {
       const { eventName } = req.query;
       const event = await Event.findOne({ eventName: eventName });
 
@@ -58,11 +68,15 @@ export default async function handler(req, res) {
         message: "Event retrieved successfully",
         event: event,
       });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
+    } else {
+      res.setHeader("Allow", ["GET"]);
+      res.status(405).json({ error: `Method ${req.method} Not Allowed` });
     }
-  } else {
-    res.setHeader("Allow", ["GET"]);
-    res.status(405).end(`Method ${req.method} Not Allowed`);
+  } catch (error) {
+    console.error("Handler error:", error);
+    res.status(500).json({
+      error: "Internal server error",
+      message: error.message,
+    });
   }
 }

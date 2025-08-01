@@ -1,7 +1,6 @@
 import mongoose from "mongoose";
-import path from "path";
 
-// Define Event schema directly in the function
+// Event Schema
 const eventSchema = new mongoose.Schema({
   eventName: String,
   category: String,
@@ -11,25 +10,42 @@ const eventSchema = new mongoose.Schema({
   sold: Number,
 });
 
+// Prevent re-compilation error
 const Event = mongoose.models.Event || mongoose.model("Event", eventSchema);
 
-// Connect to MongoDB
+// Database connection
+let isConnected = false;
+
 const connectDB = async () => {
-  if (mongoose.connections[0].readyState) {
+  if (isConnected && mongoose.connection.readyState === 1) {
+    console.log("Using existing database connection");
     return;
   }
 
   try {
-    await mongoose.connect(
-      `mongodb+srv://${process.env.DB_USER_NAME}:${process.env.DB_PASSWORD}@cluster0.5xecffb.mongodb.net/ipfs-events`,
-      {
-        tls: true,
-        tlsAllowInvalidCertificates: false,
-        tlsAllowInvalidHostnames: false,
-      }
-    );
+    const dbUser = process.env.DB_USER_NAME;
+    const dbPassword = process.env.DB_PASSWORD;
+
+    if (!dbUser || !dbPassword) {
+      throw new Error(
+        "Database credentials not found in environment variables"
+      );
+    }
+
+    const connectionString = `mongodb+srv://${dbUser}:${dbPassword}@cluster0.5xecffb.mongodb.net/ipfs-events`;
+
+    console.log("Attempting to connect to MongoDB...");
+
+    await mongoose.connect(connectionString, {
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    });
+
+    isConnected = true;
+    console.log("MongoDB connected successfully");
   } catch (error) {
-    console.error(error);
+    console.error("MongoDB connection error:", error);
+    throw error;
   }
 };
 
@@ -45,14 +61,13 @@ export default async function handler(req, res) {
       return;
     }
 
-    console.log("Connecting to database...");
+    // Connect to database
     await connectDB();
-    console.log("Database connected successfully");
 
     if (req.method === "GET") {
-      console.log("Fetching events...");
-      const events = await Event.find();
-      console.log(`Found ${events.length} events`);
+      console.log("Fetching events from database...");
+      const events = await Event.find().lean();
+      console.log(`Successfully retrieved ${events.length} events`);
 
       res.status(200).json({
         message: "Events retrieved successfully",
@@ -61,14 +76,14 @@ export default async function handler(req, res) {
       });
     } else {
       res.setHeader("Allow", ["GET"]);
-      res.status(405).end(`Method ${req.method} Not Allowed`);
+      res.status(405).json({ error: `Method ${req.method} Not Allowed` });
     }
   } catch (error) {
-    console.error("Function error:", error);
+    console.error("Handler error:", error);
     res.status(500).json({
-      error: error.message,
-      stack: error.stack,
-      details: "Check Vercel function logs for more details",
+      error: "Internal server error",
+      message: error.message,
+      stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
     });
   }
 }
