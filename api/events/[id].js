@@ -1,6 +1,16 @@
-const mongoose = require("mongoose");
-const Event = require("../../models/Event");
-require("dotenv").config();
+import mongoose from "mongoose";
+
+// Define Event schema directly in the function
+const eventSchema = new mongoose.Schema({
+  eventName: String,
+  category: String,
+  description: String,
+  startDate: String,
+  endDate: String,
+  sold: Number,
+});
+
+const Event = mongoose.models.Event || mongoose.model("Event", eventSchema);
 
 // Connect to MongoDB
 const connectDB = async () => {
